@@ -2,11 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { downloadFile, updateRow, supabaseServer } from '@/lib/supabaseServer';
 import { extractTextFromFile } from '@/lib/textExtract';
 import { analyzeContractText, chunkText } from '@/lib/ai';
-
+import fs from 'fs/promises'
+export const config = {
+  runtime: 'nodejs', // important: disables edge runtime
+};
 // SECURITY: This route is intended for internal use (e.g., worker or admin). Consider protecting with a secret header.
 const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET; // TODO: set and verify in middleware or here.
 
 export async function POST(req: NextRequest) {
+   console.log('POST /api/process handler reached');
   try {
     // Optional secret check
     if (INTERNAL_SECRET) {
@@ -23,8 +27,9 @@ export async function POST(req: NextRequest) {
     }
 
     const { data: contract, error } = await supabaseServer.from('contracts').select('*').eq('id', contractId).single();
+
     if (error || !contract) {
-      return NextResponse.json({ error: 'Contract not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Contract not found', details: { error, contractId, contract } }, { status: 404 });
     }
 
     const filePath = contract.file_path as string;
@@ -39,10 +44,9 @@ export async function POST(req: NextRequest) {
     } as unknown as Record<string, unknown>);
 
     return NextResponse.json({ ok: true, count: riskItems.length });
+    //return NextResponse.json({ ok: true });
   } catch (error: unknown) {
     console.error('POST /api/process error', error);
     return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
-
-

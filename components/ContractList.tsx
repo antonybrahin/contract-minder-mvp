@@ -13,6 +13,21 @@ function SeverityDot({ level }: { level: 'LOW' | 'MEDIUM' | 'HIGH' }) {
   return <span className={`inline-block w-3 h-3 rounded-full ${color}`} />;
 }
 
+function getOverallRisk(riskSummary) {
+  // Use an empty array as a safe default if riskSummary is null or undefined
+  const summary = riskSummary ?? [];
+
+  if (summary.some(item => item.risk_level === 'HIGH')) {
+    return 'HIGH';
+  }
+
+  if (summary.some(item => item.risk_level === 'MEDIUM')) {
+    return 'MEDIUM';
+  }
+
+  return 'LOW';
+}
+
 export default function ContractList({ contracts }: { contracts: Contract[] }) {
   return (
     <div className="border rounded">
@@ -24,7 +39,7 @@ export default function ContractList({ contracts }: { contracts: Contract[] }) {
       </div>
       <div>
         {contracts.map((c) => {
-          const top = c.risk_summary?.find((_) => true)?.risk_level ?? 'LOW';
+          const top = getOverallRisk(c.risk_summary);
           return (
             <div key={c.id} className="grid grid-cols-4 gap-2 p-3 border-b items-center">
               <div className="truncate">{c.title}</div>

@@ -5,7 +5,13 @@
 import OpenAI from 'openai';
 import { z } from 'zod';
 import { sha256 } from 'js-sha256';
+import { callGemini } from './geminiLLM';
+import { hfLLMComplete } from './huggingfaceLLM';
+import { openrouterLLMComplete } from './openrouterLLM';
+import dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
 
+// Load environment variables from .env.local
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY; // TODO: set in .env.local
 const OPENAI_MODEL = process.env.OPENAI_MODEL || 'gpt-4o-mini'; // Allow override; 'gpt-5' may not be available in all accounts
 if (!OPENAI_API_KEY) {
@@ -43,7 +49,20 @@ const RiskItemSchema = z.object({
 
 export type RiskItem = z.infer<typeof RiskItemSchema>;
 
-export async function callGPT5(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
+export async function callAI(prompt: string, options?: { temperature?: number; maxTokens?: number }): Promise<string> {
+  switch (process.env.ACTIVE_LLM) {
+    case 'gemini':
+      return await callGemini(prompt);
+    case 'openrouter':
+      return await openrouterLLMComplete(prompt);
+    case 'huggingface':
+      return await hfLLMComplete(prompt);
+    default:
+      return await callOpenAI(prompt, options);
+  }
+
+}
+async function callOpenAI(prompt:string, options: { temperature?: number; maxTokens?: number } = {}) : Promise<string> {
   const response = await openai.chat.completions.create({
     model: OPENAI_MODEL,
     temperature: options?.temperature ?? 0,
@@ -71,10 +90,25 @@ export function chunkText(text: string, approxChars = 12000, overlap = 400): str
   return chunks;
 }
 
+function extractJsonFromString(raw: string): string | null {
+  // This regex finds a JSON object or array within a larger string
+  const jsonRegex = /\[[\s\S]*\]|\{[\s\S]*\}/;
+  const match = raw.match(jsonRegex);
+
+  if (match) {
+    return match[0];
+  }
+  
+  return null; // Return null if no JSON is found
+}
+
 function validateOrRetryJSON(raw: string): RiskItem[] {
   let parsed: unknown;
+  
   try {
-    parsed = JSON.parse(raw);
+    const cleanJsonString = extractJsonFromString(raw);
+    console.log('Extracted JSON:', cleanJsonString);
+    parsed = JSON.parse(cleanJsonString || '');
   } catch {
     throw new Error('Invalid JSON');
   }
@@ -104,19 +138,27 @@ export async function analyzeContractText(contractId: string, textChunks: string
 
     let attempt = 0;
     let validated: RiskItem[] | null = null;
+    //const raw = await callAI(userPrompt, { temperature: 0 });
+    //validated = validateOrRetryJSON(raw);
+    //allItems.push(...validated);
+
     while (attempt < 3 && !validated) {
-      const raw = await callGPT5(userPrompt, { temperature: 0 });
+      console.log(`Calling AI for contract ${contractId}, attempt ${attempt + 1}`);
+      const raw = await callAI(userPrompt, { temperature: 0 });
+      //console.log(`AI response for contract ${contractId}:`, raw);
       try {
         validated = validateOrRetryJSON(raw);
       } catch (e) {
         attempt += 1;
         if (attempt >= 3) {
-          console.warn(`GPT-5 returned invalid JSON after retries for contract ${contractId}:`, e);
+          console.warn(`AI returned invalid JSON after retries for contract ${contractId}:`, e);
           validated = [];
         } else {
           // Retry by nudging the model
           const retryPrompt = `${userPrompt}\n\nYou returned invalid JSON — return strictly JSON array with described fields.`;
-          const retryRaw = await callGPT5(retryPrompt, { temperature: 0 });
+          console.log(`Retrying AI analysis for contract ${contractId}, attempt ${attempt + 1}`);
+          const retryRaw = await callAI(retryPrompt, { temperature: 0 });
+          //console.log(`Retry AI response for contract ${contractId}:`, retryRaw);
           try {
             validated = validateOrRetryJSON(retryRaw);
           } catch {
@@ -143,5 +185,3 @@ export async function analyzeContractText(contractId: string, textChunks: string
   }
   return Object.values(mostSevere);
 }
-
-
